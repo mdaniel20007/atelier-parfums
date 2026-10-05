@@ -6,7 +6,7 @@ import { txt } from '@/lib/datos';
 
 // Público: un cliente encarga un perfume que no está en el catálogo. Entra como "Nuevo".
 export const POST = manejar(async (req) => {
-  limitar(req, 'encargo', 6, 10 * 60_000);
+  await limitar(req, 'encargo', 6, 10 * 60_000);
   const b = await req.json();
   const perfume = txt(b.perfume, 160, 'el perfume', true);
   const detalles = txt(b.detalles, 400, 'los detalles');

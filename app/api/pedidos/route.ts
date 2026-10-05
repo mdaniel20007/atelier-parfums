@@ -9,7 +9,7 @@ import { ZONAS, pagosPara, costoEnvio } from '@/lib/zonas';
 // Público: registra el pedido que el cliente envía por WhatsApp desde el carrito.
 // Los precios y el envío se recalculan aquí con los datos de la base (no se confía en el navegador).
 export const POST = manejar(async (req) => {
-  limitar(req, 'pedido', 10, 10 * 60_000);
+  await limitar(req, 'pedido', 10, 10 * 60_000);
   const b = await req.json();
 
   const nombre = txt(b.nombre, 60, 'el nombre', true);

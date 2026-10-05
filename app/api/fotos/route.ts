@@ -6,6 +6,16 @@ import { subirFoto, borrarFoto } from '@/lib/storage';
 const SLOT_RE = /^(foto-[A-Za-z0-9_-]{1,40}-[1-4]|hero-editorial|categoria-[a-z]{1,30})$/;
 const TIPOS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/avif': 'avif' };
 
+// Revisa la "firma" de los primeros bytes: no basta con que el navegador diga que es imagen.
+function esImagen(b: Uint8Array, tipo: string) {
+  const asc = (i: number, n: number) => String.fromCharCode(...b.slice(i, i + n));
+  if (tipo === 'image/jpeg') return b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  if (tipo === 'image/png') return b[0] === 0x89 && asc(1, 3) === 'PNG';
+  if (tipo === 'image/webp') return asc(0, 4) === 'RIFF' && asc(8, 4) === 'WEBP';
+  if (tipo === 'image/avif') return asc(4, 4) === 'ftyp' && /avi[fs]/.test(asc(8, 4));
+  return false;
+}
+
 // Subir (o reemplazar) la foto de un espacio. El navegador la reduce antes de enviarla.
 export const POST = manejar(async (req) => {
   await requireAdmin(req);
@@ -17,8 +27,10 @@ export const POST = manejar(async (req) => {
   const ext = TIPOS[file.type];
   if (!ext) throw new HttpError(400, 'Formato no permitido (usa JPG, PNG o WebP)');
   if (file.size > 4 * 1024 * 1024) throw new HttpError(400, 'La foto pesa más de 4 MB');
+  const datos = await file.arrayBuffer();
+  if (!esImagen(new Uint8Array(datos), file.type)) throw new HttpError(400, 'El archivo no es una imagen válida');
   const nombre = `${slot}-${Date.now().toString(36)}.${ext}`;
-  const url = await subirFoto(nombre, await file.arrayBuffer(), file.type);
+  const url = await subirFoto(nombre, datos, file.type);
   const prev = await sql`select path from fotos where slot = ${slot}`;
   await sql`insert into fotos (slot, url, path) values (${slot}, ${url}, ${nombre})
     on conflict (slot) do update set url = excluded.url, path = excluded.path, actualizado_at = now()`;

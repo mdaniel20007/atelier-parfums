@@ -21,7 +21,7 @@ export async function verificarGoogle(credential: string) {
   const aud = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   if (!aud) throw new HttpError(503, 'El inicio de sesión con Google no está configurado');
   try {
-    const { payload } = await jwtVerify(credential, GOOGLE_JWKS, { issuer: ['https://accounts.google.com', 'accounts.google.com'], audience: aud });
+    const { payload } = await jwtVerify(credential, GOOGLE_JWKS, { issuer: ['https://accounts.google.com', 'accounts.google.com'], audience: aud, algorithms: ['RS256'] });
     if (!payload.sub || !payload.email || payload.email_verified === false) throw new Error('sin correo');
     return { id: String(payload.sub), email: String(payload.email), nombre: String(payload.name || ''), foto: String(payload.picture || '') };
   } catch {
@@ -38,7 +38,7 @@ export async function clienteActual(): Promise<{ id: string; email: string; nomb
   const token = (await cookies()).get(COOKIE_CLIENTE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secreto());
+    const { payload } = await jwtVerify(token, secreto(), { algorithms: ['HS256'] });
     if (!payload.sub) return null;
     const [c] = await sql`select id, email, nombre, foto, telefono, zona, direccion from clientes where id = ${payload.sub}`;
     return (c as any) || null;

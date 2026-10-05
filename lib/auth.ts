@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { sql } from './db';
 
 export const COOKIE = 'atelier_admin';
 const DIAS = 7;
@@ -11,8 +12,12 @@ function secreto() {
   return new TextEncoder().encode(s);
 }
 
-export async function crearSesion(email: string) {
-  const token = await new SignJWT({ email })
+// "v" ata la sesión a la contraseña actual: si se cambia la contraseña o se borra el usuario,
+// todas sus sesiones abiertas dejan de servir al instante.
+const versionDe = (hash: string) => hash.slice(-12);
+
+export async function crearSesion(email: string, hash: string) {
+  const token = await new SignJWT({ email, v: versionDe(hash) })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${DIAS}d`)
@@ -24,8 +29,11 @@ export async function adminActual(): Promise<string | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secreto());
-    return typeof payload.email === 'string' ? payload.email : null;
+    const { payload } = await jwtVerify(token, secreto(), { algorithms: ['HS256'] });
+    if (typeof payload.email !== 'string' || typeof payload.v !== 'string') return null;
+    const [a] = await sql`select hash from admins where email = ${payload.email}`;
+    if (!a || versionDe(a.hash) !== payload.v) return null;
+    return payload.email;
   } catch {
     return null;
   }
@@ -35,15 +43,18 @@ export class HttpError extends Error {
   constructor(public status: number, msg: string) { super(msg); }
 }
 
-// Para rutas que modifican datos: sesión válida + misma procedencia (protección CSRF).
+// Protección CSRF: todo cambio debe venir de una página de este mismo sitio.
+function mismoOrigen(req: Request) {
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  const fuente = req.headers.get('origin') || req.headers.get('referer');
+  if (!host || !fuente) return false;
+  try { return new URL(fuente).host === host; } catch { return false; }
+}
+
 export async function requireAdmin(req: Request) {
+  if (req.method !== 'GET' && !mismoOrigen(req)) throw new HttpError(403, 'Origen no permitido');
   const email = await adminActual();
   if (!email) throw new HttpError(401, 'Tu sesión expiró. Vuelve a iniciar sesión.');
-  if (req.method !== 'GET') {
-    const origin = req.headers.get('origin');
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
-    if (origin && host && new URL(origin).host !== host) throw new HttpError(403, 'Origen no permitido');
-  }
   return email;
 }
 
@@ -59,14 +70,23 @@ export function manejar(fn: (req: Request, ctx: any) => Promise<Response>) {
   };
 }
 
-// Límite simple por IP (por instancia). Frena abusos básicos en las rutas públicas.
-const cubetas = new Map<string, { n: number; t: number }>();
-export function limitar(req: Request, clave: string, max: number, ventanaMs: number) {
-  const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'local';
-  const k = clave + '|' + ip;
-  const now = Date.now();
-  const c = cubetas.get(k);
-  if (!c || now - c.t > ventanaMs) { cubetas.set(k, { n: 1, t: now }); }
-  else if (++c.n > max) throw new HttpError(429, 'Demasiadas solicitudes. Intenta en unos minutos.');
-  if (cubetas.size > 5000) cubetas.clear();
+// IP real del visitante. En Vercel, x-real-ip / x-vercel-forwarded-for los pone la plataforma
+// (el visitante no los puede falsificar).
+export function ipDe(req: Request) {
+  return (req.headers.get('x-vercel-forwarded-for') || req.headers.get('x-real-ip') || req.headers.get('x-forwarded-for') || '')
+    .split(',')[0].trim() || 'local';
+}
+
+// Límite de solicitudes guardado en la base: funciona igual con muchas instancias del servidor.
+export async function contar(clave: string, ventanaMs: number, sumar = 1) {
+  const ventana = Math.floor(Date.now() / ventanaMs);
+  const [r] = await sql`insert into limites (clave, ventana, n) values (${clave}, ${ventana}, ${sumar})
+    on conflict (clave, ventana) do update set n = limites.n + ${sumar} returning n`;
+  if (Math.random() < 0.02) sql`delete from limites where ventana < ${ventana - 2}`.catch(() => {});
+  return r.n as number;
+}
+
+export async function limitar(req: Request, clave: string, max: number, ventanaMs: number) {
+  const n = await contar(clave + '|' + ipDe(req), ventanaMs);
+  if (n > max) throw new HttpError(429, 'Demasiadas solicitudes. Intenta en unos minutos.');
 }

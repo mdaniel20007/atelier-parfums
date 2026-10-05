@@ -5,7 +5,7 @@ import { validarResena } from '@/lib/datos';
 
 // Público: la reseña siempre entra como "pendiente" hasta que el administrador la aprueba.
 export const POST = manejar(async (req) => {
-  limitar(req, 'resena', 5, 10 * 60_000);
+  await limitar(req, 'resena', 5, 10 * 60_000);
   const r = validarResena(await req.json());
   if (r.pid) {
     const ex = await sql`select 1 from productos where id = ${r.pid}`;

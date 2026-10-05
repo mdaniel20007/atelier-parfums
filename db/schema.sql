@@ -153,3 +153,12 @@ create table if not exists encargos (
 create index if not exists encargos_creado_idx on encargos (creado_at desc);
 alter table clientes enable row level security;
 alter table encargos enable row level security;
+
+-- Límites de solicitudes (anti fuerza bruta / spam). Compartido entre todas las instancias del servidor.
+create table if not exists limites (
+  clave    text not null,
+  ventana  bigint not null,
+  n        integer not null default 0,
+  primary key (clave, ventana)
+);
+alter table limites enable row level security;

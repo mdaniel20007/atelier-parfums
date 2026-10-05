@@ -9,7 +9,7 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) && v !== null && v !== '
 
 // Público: recibe eventos anónimos de la tienda (se envían con navigator.sendBeacon, en lotes).
 export const POST = manejar(async (req) => {
-  limitar(req, 'eventos', 120, 60_000);
+  await limitar(req, 'eventos', 120, 60_000);
   let body: any;
   try { body = JSON.parse(await req.text()); } catch { return new NextResponse(null, { status: 204 }); }
   const lista = (Array.isArray(body) ? body : [body]).slice(0, 50);
@@ -37,6 +37,8 @@ export const GET = manejar(async (req) => {
   await requireAdmin(req);
   const dias = Math.min(120, Math.max(1, Number(new URL(req.url).searchParams.get('dias')) || 62));
   const desde = Date.now() - dias * 86_400_000;
+  // Retención: los eventos de más de 13 meses se borran solos.
+  sql`delete from eventos where t < ${Date.now() - 400 * 86_400_000}`.catch(() => {});
   const rows = await sql`select t, tipo, vid, dev, pid, cat, q, res, total, pids from eventos where t >= ${desde} order by t limit 200000`;
   const evs = rows.map((r: any) => {
     const e: any = { t: Number(r.t), tipo: r.tipo, vid: r.vid, dev: r.dev };
