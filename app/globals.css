@@ -1,0 +1,6 @@
+html,body{margin:0;background:#FBF4F0;color:#3D0000;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#3D0000;text-decoration:none}
+a:hover{color:#7A532E}
+button,input,select,textarea{font-family:inherit}
+::selection{background:#F5E6E0;color:#3D0000}
