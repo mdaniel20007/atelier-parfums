@@ -3,6 +3,7 @@
 import React, { Fragment } from 'react';
 import { DCLogic, arr } from '@/lib/dc';
 import ImageSlot from '@/components/ImageSlot';
+import AdminEncargos from '@/components/AdminEncargos';
 
 export default class Administrador extends DCLogic {
   CATS = ['Todos', 'Hombre', 'Mujer', 'Árabes', 'De diseñador', 'Descuento'];
@@ -41,7 +42,7 @@ export default class Administrador extends DCLogic {
     const parts = decodeURIComponent(location.hash.slice(1)).split('&').filter(Boolean);
     parts.forEach(x => {
       const [k, v] = x.split('=');
-      if (['resumen', 'metricas', 'pedidos', 'productos', 'resenas', 'ajustes'].includes(k)) this.setState({ tab: k, ...(k === 'metricas' && v ? { mTab: v } : {}) });
+      if (['resumen', 'metricas', 'pedidos', 'encargos', 'productos', 'resenas', 'ajustes'].includes(k)) this.setState({ tab: k, ...(k === 'metricas' && v ? { mTab: v } : {}) });
       if (k === 'editar' && v) { const p = db.productos.find(p => p.id === v); if (p) this.setState({ tab: 'productos', edit: JSON.parse(JSON.stringify(p)), isNew: false }); }
     });
   }
@@ -75,9 +76,15 @@ export default class Administrador extends DCLogic {
   orderVm(o) {
     const st = this.ORDER_ST[o.estado] || this.ORDER_ST['Por confirmar'];
     const lines = (o.items || []).map(it => { const p = this.P.find(x => x.id === it.pid); return { txt: `${it.n} × ${p ? p.marca + ' · ' + p.nombre : it.pid}`, sub: this.money(it.precio * it.n) }; });
-    const total = (o.items || []).reduce((a, it) => a + it.precio * it.n, 0);
+    const sub = (o.items || []).reduce((a, it) => a + it.precio * it.n, 0);
+    const total = o.total != null ? o.total : sub + (o.envio || 0);
+    const PAGO = { efectivo: 'Efectivo contra entrega', transferencia: 'Transferencia bancaria' };
+    const tel = String(o.telefono || '').replace(/\D/g, '');
     return {
       id: o.id, fecha: o.fecha, nombre: o.nombre, estado: o.estado, ejemplo: !!o.ejemplo, lines, totalTxt: this.money(total),
+      envioTxt: o.zona ? (o.envio == null ? 'Por confirmar' : o.envio === 0 ? 'Gratis' : this.money(o.envio)) : '',
+      zona: o.zona || '', telefono: o.telefono || '', direccion: o.direccion || '', ubicacion: o.ubicacion || '', notas: o.notas || '',
+      pago: PAGO[o.pago] || '', waLink: tel ? 'https://wa.me/' + (tel.length === 8 ? '504' + tel : tel) : '',
       resumen: lines.map(l => l.txt).join(', '),
       stBg: st[0], stColor: st[1], stBorder: st[2],
       setEstado: e => { const v = e.target.value; this.save(db => { const x = db.pedidos.find(y => y.id === o.id); if (x) x.estado = v; }, `${o.id}: ${v}`); },
@@ -103,9 +110,10 @@ export default class Administrador extends DCLogic {
     const mobile = s.w < 860;
     const pend = db.resenas.filter(r => r.estado === 'pendiente');
     const porConfirmar = (db.pedidos || []).filter(o => o.estado === 'Por confirmar');
+    const encNuevos = (db.encargos || []).filter(e => e.estado === 'Nuevo');
     const goTab = t => () => { this.setState({ tab: t }); try { history.replaceState(null, '', '#' + t); window.scrollTo(0, 0); } catch (e) {} };
-    const TABS = [['resumen', 'Resumen', 0], ['metricas', 'Métricas', 0], ['pedidos', 'Pedidos', porConfirmar.length], ['productos', 'Productos', 0], ['resenas', 'Reseñas', pend.length], ['ajustes', 'Ajustes', 0]];
-    const titles = { resumen: ['Panel', 'Resumen'], metricas: ['Tableros', 'Métricas'], pedidos: ['Ventas por WhatsApp', 'Pedidos'], productos: ['Catálogo', 'Productos'], resenas: ['Clientes', 'Reseñas'], ajustes: ['Tienda', 'Ajustes'] };
+    const TABS = [['resumen', 'Resumen', 0], ['metricas', 'Métricas', 0], ['pedidos', 'Pedidos', porConfirmar.length], ['encargos', 'Encargos', encNuevos.length], ['productos', 'Productos', 0], ['resenas', 'Reseñas', pend.length], ['ajustes', 'Ajustes', 0]];
+    const titles = { resumen: ['Panel', 'Resumen'], metricas: ['Tableros', 'Métricas'], pedidos: ['Ventas por WhatsApp', 'Pedidos'], encargos: ['Perfumes por traer', 'Encargos'], productos: ['Catálogo', 'Productos'], resenas: ['Clientes', 'Reseñas'], ajustes: ['Tienda', 'Ajustes'] };
 
     // ---- Métricas ----
     const MX = window.AtelierMetricas;
@@ -212,7 +220,7 @@ export default class Administrador extends DCLogic {
     const scale = (label, key, words) => ({ label, word: e ? words[(e[key] || 1) - 1] : '', steps: [1, 2, 3, 4, 5].map(i => ({ bg: e && i <= e[key] ? '#3D0000' : '#E2CBC1', aria: `${label} ${i}`, set: () => this.setE({ [key]: i }) })) });
 
     const aj = s.aj || {};
-    const ajF = (label, key, ph, hint) => ({ label, ph, hint, value: aj[key] || '', set: ev => this.setState({ aj: { ...aj, [key]: ev.target.value } }) });
+    const ajF = (label, key, ph, hint, type) => ({ label, ph, hint, type: type || 'text', value: aj[key] || '', set: ev => this.setState({ aj: { ...aj, [key]: ev.target.value } }) });
 
     const revList = db.resenas.filter(r => r.estado === s.revTab);
     const counts = { pendiente: pend.length, publicada: db.resenas.filter(r => r.estado === 'publicada').length, oculta: db.resenas.filter(r => r.estado === 'oculta').length };
@@ -232,7 +240,10 @@ export default class Administrador extends DCLogic {
       mobile, desktop: !mobile, tableMode: s.w >= 1200, cardMode: s.w < 1200, shellDir: mobile ? 'column' : 'row',
       tabs: TABS.map(([k, l, b]) => ({ label: l, badge: b, hasBadge: b > 0, bg: s.tab === k ? '#F5E6E0' : 'transparent', color: s.tab === k ? '#3D0000' : '#F5E6E0', go: goTab(k) })),
       eyebrow: titles[s.tab][0], title: titles[s.tab][1],
-      isResumen: s.tab === 'resumen', isPedidos: s.tab === 'pedidos', isProductos: s.tab === 'productos', isResenas: s.tab === 'resenas', isAjustes: s.tab === 'ajustes',
+      isResumen: s.tab === 'resumen', isPedidos: s.tab === 'pedidos', isEncargos: s.tab === 'encargos',
+      encargosList: db.encargos || [],
+      encEstado: (id, v) => this.save(db => { const x = (db.encargos || []).find(y => y.id === id); if (x) x.estado = v; }, `${id}: ${v}`),
+      encEliminar: id => this.save(db => { db.encargos = (db.encargos || []).filter(y => y.id !== id); }, 'Encargo eliminado'), isProductos: s.tab === 'productos', isResenas: s.tab === 'resenas', isAjustes: s.tab === 'ajustes',
       goPedidos: goTab('pedidos'), goResenas: goTab('resenas'),
       resetData: () => { const d = window.AtelierDatos.reset(); this.setState({ db: d, aj: { ...d.ajustes }, edit: null }); this.showToast('Datos de ejemplo restablecidos'); },
 
@@ -240,6 +251,7 @@ export default class Administrador extends DCLogic {
         { n: this.P.length, label: 'Productos en catálogo', go: goTab('productos') },
         { n: porConfirmar.length, label: 'Pedidos por confirmar', go: goTab('pedidos') },
         { n: pend.length, label: 'Reseñas por aprobar', go: goTab('resenas') },
+        { n: encNuevos.length, label: 'Encargos nuevos', go: goTab('encargos') },
         { n: this.P.filter(p => p.descuento > 0).length, label: 'Con descuento', go: () => this.setState({ tab: 'productos', cat: 'Descuento' }) },
         { n: this.P.filter(p => p.estado === 'pocas').length, label: 'Pocas unidades', go: goTab('productos') },
         { n: this.P.filter(p => p.estado === 'agotado').length, label: 'Agotados', go: goTab('productos') }
@@ -265,9 +277,13 @@ export default class Administrador extends DCLogic {
         ajF('Horario', 'horario', 'Lunes a sábado, 9:00 a.m. – 6:00 p.m.', ''),
         ajF('Instagram', 'instagram', '@usuario', ''),
         ajF('Facebook', 'facebook', 'Nombre de la página', ''),
-        ajF('TikTok', 'tiktok', '@usuario', '')
+        ajF('TikTok', 'tiktok', '@usuario', ''),
+        ajF('Envío en Tegucigalpa (L)', 'envio_tegus', '80', 'Tegucigalpa y Comayagüela. Vacío = "por confirmar"; 0 = gratis.', 'number'),
+        ajF('Envío al resto del país (L)', 'envio_nacional', '150', 'Los demás departamentos. Vacío = "por confirmar".', 'number'),
+        ajF('Envío gratis desde (L)', 'envio_gratis', '3000', 'Opcional. Si el pedido llega a este monto, el envío es gratis.', 'number')
       ],
       ajTextos: [
+        ajF('Datos bancarios (para transferencias)', 'banco', 'BAC Credomatic · Cuenta de ahorro 123456789 · A nombre de ...', 'Se muestran al cliente cuando elige transferencia en el carrito.'),
         ajF('Métodos de pago', 'pagos', 'Transferencia bancaria, depósito o efectivo contra entrega en Tegucigalpa.', 'Aparece en "¿Por qué comprar con nosotros?" y en preguntas frecuentes.'),
         ajF('Envíos', 'envios', 'Entregas en Tegucigalpa el mismo día. Envíos a todo el país por Cargo Expreso (2–3 días).', 'Cobertura, costo, empresa y tiempo de entrega.'),
         ajF('Garantía de originalidad', 'garantia', 'Compramos directamente a distribuidores autorizados en EE. UU.', 'Se agrega a la respuesta "¿Los perfumes son originales?".'),
@@ -1209,6 +1225,32 @@ function view($v) {
                         <span style={{ fontSize: "14px", fontWeight: "500" }}>
                           {o?.nombre}
                         </span>
+                        {o?.telefono ? (
+                          <a href={o?.waLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13.5px", color: "#3D0000", textDecoration: "underline", textDecorationColor: "#A97C50", textUnderlineOffset: "4px" }}>
+                            {"WhatsApp " + o?.telefono}
+                          </a>
+                        ) : null}
+                        {o?.zona ? (
+                          <span style={{ fontSize: "13px", lineHeight: "1.5", color: "#6E3A34" }}>
+                            <strong style={{ fontWeight: "500", color: "#3D0000" }}>{o?.zona}</strong>
+                            {o?.direccion ? " · " + o?.direccion : ""}
+                          </span>
+                        ) : null}
+                        {o?.ubicacion ? (
+                          <a href={o?.ubicacion} target="_blank" rel="noopener noreferrer" style={{ fontSize: "13px", color: "#3D0000", textDecoration: "underline", textUnderlineOffset: "4px" }}>
+                            {"Ver ubicación en el mapa"}
+                          </a>
+                        ) : null}
+                        {o?.pago ? (
+                          <span style={{ alignSelf: "flex-start", marginTop: "2px", padding: "4px 10px", fontSize: "10.5px", letterSpacing: ".16em", textTransform: "uppercase", border: "1px solid #A97C50", color: "#7A532E" }}>
+                            {o?.pago}
+                          </span>
+                        ) : null}
+                        {o?.notas ? (
+                          <span style={{ fontSize: "12.5px", fontStyle: "italic", color: "#6E3A34" }}>
+                            {"“" + o?.notas + "”"}
+                          </span>
+                        ) : null}
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                         {arr(o?.lines).map((l, $index) => (
@@ -1224,9 +1266,19 @@ function view($v) {
                           </Fragment>
                         ))}
                         {" "}
+                        {o?.envioTxt ? (
+                          <span style={{ display: "flex", justifyContent: "space-between", gap: "14px", fontSize: "13.5px", lineHeight: "1.45" }}>
+                            <span>
+                              {"Envío"}
+                            </span>
+                            <span style={{ whiteSpace: "nowrap", color: "#6E3A34" }}>
+                              {o?.envioTxt}
+                            </span>
+                          </span>
+                        ) : null}
                         <span style={{ display: "flex", justifyContent: "space-between", gap: "14px", paddingTop: "8px", marginTop: "4px", borderTop: "1px solid #E2CBC1", fontSize: "14px", fontWeight: "500" }}>
                           <span>
-                            {"Total estimado"}
+                            {"Total"}
                           </span>
                           <span>
                             {o?.totalTxt}
@@ -1471,6 +1523,9 @@ function view($v) {
             </>
           ) : null}
           {" "}
+          {$v.isEncargos ? (
+            <AdminEncargos encargos={$v.encargosList} onEstado={$v.encEstado} onEliminar={$v.encEliminar} />
+          ) : null}
           {$v.isResenas ? (
             <>
               <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -1569,7 +1624,7 @@ function view($v) {
                           {fd?.label}
                         </span>
                         {" "}
-                        <input value={fd?.value ?? ""} onChange={fd?.set} placeholder={fd?.ph} style={{ width: "100%", minHeight: "46px", padding: "0 16px", border: "1px solid #E2CBC1", borderRadius: "10px", background: "transparent", fontSize: "14.5px", color: "#3D0000", outline: "none" }} />
+                        <input value={fd?.value ?? ""} onChange={fd?.set} type={fd?.type} min={0} placeholder={fd?.ph} style={{ width: "100%", minHeight: "46px", padding: "0 16px", border: "1px solid #E2CBC1", borderRadius: "10px", background: "transparent", fontSize: "14.5px", color: "#3D0000", outline: "none" }} />
                         {" "}
                         <span style={{ fontSize: "12px", color: "#6E3A34" }}>
                           {fd?.hint}

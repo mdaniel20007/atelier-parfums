@@ -88,12 +88,9 @@ function view($v) {
       {$v.available ? (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <button onClick={$v.p?.onOrder} style={{ minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontFamily: "Jost, sans-serif", fontSize: "12.5px", letterSpacing: ".01em", whiteSpace: "nowrap", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 10px" }} className={"dcp4"}>
-              {"Pedir por WhatsApp "}
-            </button>
-            {" "}
-            <button onClick={$v.p?.onAdd} style={{ minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", fontFamily: "Jost, sans-serif", fontSize: "12.5px", letterSpacing: ".01em", whiteSpace: "nowrap", cursor: "pointer", padding: "0 10px" }} className={"dcp1"}>
-              {"Agregar al pedido"}
+            <button onClick={$v.p?.onAdd} style={{ minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontFamily: "Jost, sans-serif", fontSize: "12px", letterSpacing: ".1em", textTransform: "uppercase", whiteSpace: "nowrap", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", padding: "0 10px" }} className={"dcp4"}>
+              <svg width={"16"} height={"16"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}><path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} /><path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} /></svg>
+              {"Agregar al carrito"}
             </button>
           </div>
         </>

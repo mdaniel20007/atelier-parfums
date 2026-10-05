@@ -49,6 +49,15 @@ create table if not exists pedidos (
   creado_at  timestamptz not null default now()
 );
 create index if not exists pedidos_creado_idx on pedidos (creado_at desc);
+-- Datos de entrega del carrito (paso Envío / Pago)
+alter table pedidos add column if not exists telefono  text not null default '';
+alter table pedidos add column if not exists zona      text not null default '';
+alter table pedidos add column if not exists direccion text not null default '';
+alter table pedidos add column if not exists ubicacion text not null default '';
+alter table pedidos add column if not exists notas     text not null default '';
+alter table pedidos add column if not exists pago      text not null default '';
+alter table pedidos add column if not exists envio     integer;
+alter table pedidos add column if not exists subtotal  integer;
 
 create table if not exists ajustes (
   id         smallint primary key default 1 check (id = 1),
@@ -66,6 +75,11 @@ alter table ajustes add column if not exists envios   text not null default '';
 alter table ajustes add column if not exists garantia text not null default '';
 alter table ajustes add column if not exists ofertas  text not null default '';
 alter table ajustes add column if not exists cambios  text not null default '';
+-- Envíos y pago (texto vacío = "por confirmar")
+alter table ajustes add column if not exists envio_tegus    text not null default '';
+alter table ajustes add column if not exists envio_nacional text not null default '';
+alter table ajustes add column if not exists envio_gratis   text not null default '';
+alter table ajustes add column if not exists banco          text not null default '';
 insert into ajustes (id) values (1) on conflict do nothing;
 
 -- Fotos: una URL por espacio ('foto-<productoId>-<1..4>', 'hero-editorial', 'categoria-<slug>')
@@ -108,3 +122,34 @@ alter table ajustes  enable row level security;
 alter table fotos    enable row level security;
 alter table eventos  enable row level security;
 alter table admins   enable row level security;
+
+-- Clientes (inicio de sesión opcional con Google)
+create table if not exists clientes (
+  id         text primary key,                    -- "sub" de Google
+  email      text not null,
+  nombre     text not null default '',
+  foto       text not null default '',
+  telefono   text not null default '',
+  zona       text not null default '',
+  direccion  text not null default '',
+  creado_at  timestamptz not null default now(),
+  visto_at   timestamptz not null default now()
+);
+alter table pedidos add column if not exists cliente_id text references clientes(id) on delete set null;
+create index if not exists pedidos_cliente_idx on pedidos (cliente_id);
+
+-- Encargos: perfumes que el cliente pide y no están en el catálogo
+create sequence if not exists encargo_seq;
+create table if not exists encargos (
+  id         text primary key default ('E-' || lpad(nextval('encargo_seq')::text, 4, '0')),
+  perfume    text not null,
+  detalles   text not null default '',
+  nombre     text not null,
+  telefono   text not null,
+  cliente_id text references clientes(id) on delete set null,
+  estado     text not null default 'Nuevo' check (estado in ('Nuevo','Cotizado','Pedido al proveedor','Listo para entregar','Entregado','Cancelado')),
+  creado_at  timestamptz not null default now()
+);
+create index if not exists encargos_creado_idx on encargos (creado_at desc);
+alter table clientes enable row level security;
+alter table encargos enable row level security;

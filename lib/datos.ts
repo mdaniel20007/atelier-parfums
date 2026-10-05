@@ -28,12 +28,19 @@ const resenaDesdeFila = (r: any) => ({
   id: r.id, pid: r.pid, nombre: r.nombre, estrellas: r.estrellas, titulo: r.titulo, texto: r.texto,
   fecha: fechaCorta(r.creado_at), estado: r.estado,
 });
-const pedidoDesdeFila = (r: any) => ({
+export const pedidoDesdeFila = (r: any) => ({
   id: r.id, fecha: fechaHora(r.creado_at), nombre: r.nombre, items: r.items, estado: r.estado,
+  telefono: r.telefono || '', zona: r.zona || '', direccion: r.direccion || '', ubicacion: r.ubicacion || '',
+  notas: r.notas || '', pago: r.pago || '', envio: r.envio, subtotal: r.subtotal, total: r.total,
+});
+const encargoDesdeFila = (r: any) => ({
+  id: r.id, fecha: fechaHora(r.creado_at), perfume: r.perfume, detalles: r.detalles, nombre: r.nombre,
+  telefono: r.telefono, estado: r.estado, conCuenta: !!r.cliente_id,
 });
 const ajustesDesdeFila = (r: any) => ({
   wa: r.wa, anuncio: r.anuncio, direccion: r.direccion, horario: r.horario, instagram: r.instagram, facebook: r.facebook, tiktok: r.tiktok,
-  pagos: r.pagos ?? '', envios: r.envios ?? '', garantia: r.garantia ?? '', ofertas: r.ofertas ?? '', cambios: r.cambios ?? '',
+  pagos: r.pagos ?? '', envios: r.envios ?? '',
+  envio_tegus: r.envio_tegus ?? '', envio_nacional: r.envio_nacional ?? '', envio_gratis: r.envio_gratis ?? '', banco: r.banco ?? '', garantia: r.garantia ?? '', ofertas: r.ofertas ?? '', cambios: r.cambios ?? '',
 });
 
 async function fotosMapa() {
@@ -59,17 +66,19 @@ export async function datosTienda() {
 }
 
 export async function datosAdmin() {
-  const [fotos, prods, res, peds, aj] = await Promise.all([
+  const [fotos, prods, res, peds, aj, encs] = await Promise.all([
     fotosMapa(),
     sql`select * from productos order by orden desc, creado_at desc`,
     sql`select * from resenas order by creado_at desc limit 2000`,
     sql`select * from pedidos order by creado_at desc limit 1000`,
     sql`select * from ajustes where id = 1`,
+    sql`select * from encargos order by creado_at desc limit 1000`,
   ]);
   return {
     productos: prods.map((r: any) => productoDesdeFila(r, fotos)),
     resenas: res.map(resenaDesdeFila),
     pedidos: peds.map(pedidoDesdeFila),
+    encargos: encs.map(encargoDesdeFila),
     ajustes: ajustesDesdeFila(aj[0] || {}),
     fotos,
   };
@@ -144,9 +153,23 @@ export function validarAjustes(b: any) {
     garantia: txt(b.garantia, 600, 'Garantía'),
     ofertas: txt(b.ofertas, 600, 'Condiciones de las ofertas'),
     cambios: txt(b.cambios, 600, 'Política de cambios'),
+    envio_tegus: monto(b.envio_tegus, 'Envío en Tegucigalpa'),
+    envio_nacional: monto(b.envio_nacional, 'Envío al resto del país'),
+    envio_gratis: monto(b.envio_gratis, 'Envío gratis desde'),
+    banco: txt(b.banco, 800, 'Datos bancarios'),
   };
 }
 
+// Monto en lempiras como texto ('' = sin definir / por confirmar)
+function monto(v: unknown, campo: string) {
+  const s = v == null ? '' : String(v).replace(/[^\d.]/g, '').trim();
+  if (!s) return '';
+  const n = Math.round(Number(s));
+  if (!Number.isFinite(n) || n < 0 || n > 100000) throw new HttpError(400, `Valor no válido en ${campo}`);
+  return String(n);
+}
+
 export const ESTADOS_PEDIDO = ['Por confirmar', 'Confirmado', 'Enviado', 'Entregado', 'Cancelado'] as const;
+export const ESTADOS_ENCARGO = ['Nuevo', 'Cotizado', 'Pedido al proveedor', 'Listo para entregar', 'Entregado', 'Cancelado'] as const;
 export const ESTADOS_RESENA = ['pendiente', 'publicada', 'oculta'] as const;
 export { txt, uno, entero };

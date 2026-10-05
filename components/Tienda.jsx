@@ -4,6 +4,11 @@ import React, { Fragment } from 'react';
 import { DCLogic, arr } from '@/lib/dc';
 import ImageSlot from '@/components/ImageSlot';
 import TarjetaProducto from '@/components/TarjetaProducto';
+import Checkout from '@/components/Checkout';
+import Encargos from '@/components/Encargos';
+import Cuenta from '@/components/Cuenta';
+import { GOOGLE_ID, getCliente, subscribeCliente, refrescarCliente, salirCliente } from '@/lib/cliente-client';
+import { PAGOS } from '@/lib/zonas';
 
 export default class Tienda extends DCLogic {
   FAMS = [
@@ -29,7 +34,7 @@ export default class Tienda extends DCLogic {
     const punto = (x) => /[.!?]$/.test(x) ? x : x + '.';
     return [
       { q: '¿Los perfumes son originales?', a: 'Sí. Todos nuestros perfumes son 100% originales, traídos de Estados Unidos en su empaque original.' + (t(aj.garantia, '') ? ' ' + punto(t(aj.garantia, '')) : '') },
-      { q: '¿Cómo hago mi pedido?', a: 'Elige tus perfumes, toca “Agregar al pedido” y, desde Mi pedido, envíanos todo por WhatsApp en un solo mensaje. También puedes pedir un perfume directamente con “Pedir por WhatsApp”. Te confirmamos disponibilidad, total y envío.' },
+      { q: '¿Cómo hago mi pedido?', a: 'Elige tus perfumes y toca “Agregar al carrito”. En el carrito completas tus datos de entrega y la forma de pago, y nos envías el pedido por WhatsApp en un solo mensaje. Te confirmamos disponibilidad y entrega. Si el perfume que buscas no está en el catálogo, pídelo en Encargos.' },
       { q: '¿Qué métodos de pago aceptan?', a: punto(t(aj.pagos, 'Escríbenos por WhatsApp y te compartimos las formas de pago disponibles')) },
       { q: '¿Hacen envíos fuera de Tegucigalpa?', a: punto(t(aj.envios, 'Sí, hacemos envíos')) + ' Te confirmamos el costo exacto por WhatsApp antes de enviar.' },
       { q: '¿Cuánto dura un descuento?', a: 'Los precios con descuento aplican mientras haya existencias.' + (t(aj.ofertas, '') ? ' ' + punto(t(aj.ofertas, '')) : '') },
@@ -39,7 +44,7 @@ export default class Tienda extends DCLogic {
   }
   emptyF() { return { cat: [], fam: [], marca: [], conc: [], rango: [] }; }
   emptyRf() { return { open: false, sent: false, pid: '', nombre: '', estrellas: 5, titulo: '', texto: '', error: '' }; }
-  state = { w: typeof window !== 'undefined' ? window.innerWidth : 1280, db: null, page: 'inicio', pid: null, cart: [], cliente: '', drawer: false, filtersOpen: false, searchOpen: false, hq: '', q: '', sort: 'destacados', f: this.emptyF(), faq: 0, gal: 0, toast: null, toastPedido: true, showMsg: false, rf: this.emptyRf(), showTab: 'pedidos' };
+  state = { w: typeof window !== 'undefined' ? window.innerWidth : 1280, db: null, page: 'inicio', pid: null, cart: [], cliente: '', drawer: false, paso: 0, cuenta: false, cli: getCliente(), encQ: '', filtersOpen: false, searchOpen: false, hq: '', q: '', sort: 'destacados', f: this.emptyF(), faq: 0, gal: 0, toast: null, toastPedido: true, showMsg: false, rf: this.emptyRf(), showTab: 'pedidos' };
 
   componentDidMount() {
     this._r = () => this.setState({ w: window.innerWidth });
@@ -55,6 +60,8 @@ export default class Tienda extends DCLogic {
           const ids = new Set((window.AtelierDatos.load().productos || []).map(p => p.id));
           if (g && Array.isArray(g.cart)) this.setState({ cart: g.cart.filter(x => x && ids.has(x.id) && x.n > 0).map(x => ({ id: x.id, n: Math.min(50, Math.round(x.n)) })), cliente: typeof g.cliente === 'string' ? g.cliente.slice(0, 60) : '' });
         } catch (e) {}
+        this._uc = subscribeCliente(cli => this.setState({ cli }));
+        refrescarCliente();
         this.readHash();
         this._pop = () => {
           if (location.hash) this.readHash();
@@ -72,7 +79,7 @@ export default class Tienda extends DCLogic {
   componentWillUnmount() {
     window.removeEventListener('resize', this._r); clearTimeout(this._t); clearTimeout(this._i); if (this._u) this._u();
     window.removeEventListener('scroll', this._onScroll); window.removeEventListener('mousemove', this._onMove); window.removeEventListener('resize', this._onScroll);
-    if (this._raf) cancelAnimationFrame(this._raf); window.removeEventListener('atelier-error', this._err); window.removeEventListener('popstate', this._pop);
+    if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; window.removeEventListener('atelier-error', this._err); window.removeEventListener('popstate', this._pop); if (this._uc) this._uc();
   }
   componentDidUpdate(_pp, ps) {
     if (this._onScroll) this._onScroll();
@@ -83,6 +90,7 @@ export default class Tienda extends DCLogic {
   // Efecto Dock general: cada módulo [data-dock] se fija mientras el scroll vertical lo desplaza
   // hacia el lado; el panel en foco (o bajo el cursor) crece y empuja a sus vecinos.
   setupShow() {
+    this._raf = null; // al volver a montar (modo desarrollo) no debe quedar un cuadro pendiente viejo
     const tick = () => {
       let done = true;
       document.querySelectorAll('[data-dock]').forEach(el => { if (!this.layoutDock(el)) done = false; });
@@ -169,6 +177,8 @@ export default class Tienda extends DCLogic {
     parts.forEach(x => {
       const [k, v] = x.split('=');
       if (k === 'catalogo') s.page = 'catalogo';
+      if (k === 'encargos') s.page = 'encargos';
+      if (k === 'cuenta') s.cuenta = true;
       if (k === 'producto' && v) { s.page = 'producto'; s.pid = v; }
       if (k === 'cat' && v) { s.page = 'catalogo'; s.f.cat = [v]; }
       if (k === 'filtros') s.filtersOpen = true;
@@ -199,9 +209,9 @@ export default class Tienda extends DCLogic {
   }
 
   go(page, extra) {
-    this.setState({ page, drawer: false, filtersOpen: false, searchOpen: false, ...extra });
+    this.setState({ page, drawer: false, cuenta: false, filtersOpen: false, searchOpen: false, ...extra });
     this.scrollTop();
-    const h = page === 'producto' ? `#producto=${extra.pid}` : page === 'catalogo' ? '#catalogo' : '';
+    const h = page === 'producto' ? `#producto=${extra.pid}` : page === 'catalogo' ? '#catalogo' : page === 'encargos' ? '#encargos' : '';
     // Cada página nueva queda en el historial: el botón "atrás" del celular vuelve dentro de la tienda.
     try {
       const url = h || location.pathname + location.search;
@@ -222,7 +232,7 @@ export default class Tienda extends DCLogic {
       const ex = s.cart.find(c => c.id === id);
       return { cart: ex ? s.cart.map(c => c.id === id ? { ...c, n: c.n + 1 } : c) : [...s.cart, { id, n: 1 }] };
     });
-    this.showToast(`${p.nombre} se agregó a tu pedido`);
+    this.showToast(`${p.nombre} se agregó al carrito`);
   }
   setQty(id, d) { this.setState(s => ({ cart: s.cart.map(c => c.id === id ? { ...c, n: c.n + d } : c).filter(c => c.n > 0) })); }
 
@@ -401,10 +411,24 @@ export default class Tienda extends DCLogic {
       navCats: this.CATS.map(c => {
         const active = isCat && f.cat.length === 1 && f.cat[0] === c && nActive === 1;
         return { label: c, border: active ? '#A97C50' : 'transparent', go: () => { this.T('categoria', { cat: c }); this.goCatalog({ cat: [c] }); } };
-      }),
+      }).concat([{ label: 'Encargos', border: s.page === 'encargos' ? '#A97C50' : 'transparent', go: () => this.go('encargos', { encQ: '' }) }]),
+      isEncargos: s.page === 'encargos',
+      goEncargos: () => this.go('encargos', { encQ: s.q || '' }),
+      encQ: s.encQ,
+      loginOn: !!GOOGLE_ID,
+      showHeaderWA: !(mobile && GOOGLE_ID),
+      cli: s.cli.cliente,
+      cliEstado: s.cli,
+      cuentaOpen: s.cuenta,
+      openCuenta: () => this.setState({ cuenta: true, toast: null }),
+      closeCuenta: () => this.setState({ cuenta: false }),
+      salir: () => { salirCliente(); },
+      cuentaEncargos: () => { this.setState({ cuenta: false }); this.go('encargos', { encQ: '' }); },
+      waNumEnc: this.waNum(),
+      allProducts: this.P,
       count,
       openDrawer: () => this.setState({ drawer: true, toast: null }),
-      closeDrawer: () => this.setState({ drawer: false }),
+      closeDrawer: () => this.setState({ drawer: false, paso: 0 }),
       contactWA: () => { this.T('whatsapp', {}); this.wa('Hola, Atelier Parfums. Quisiera información sobre sus perfumes.'); },
       goCatalogAll: () => this.goCatalog({}),
       goNovedades: () => this.goCatalog({}),
@@ -453,19 +477,46 @@ export default class Tienda extends DCLogic {
       msgText, showMsg: s.showMsg,
       msgToggleLabel: s.showMsg ? 'Ocultar mensaje' : 'Ver el mensaje que se enviará',
       toggleMsg: () => this.setState({ showMsg: !s.showMsg }),
-      sendOrder: () => {
-        this.T('pedido', { total, pids: cartRows.map(x => x.p.id) });
-        this.wa(msgText);
+      enCheckout: s.paso > 0 && cartRows.length > 0,
+      goCheckout: () => this.setState({ paso: 1 }),
+      checkoutItems: cartRows.map(x => ({ nombre: x.p.nombre, marca: x.p.marca, n: x.c.n, precio: this.pf(x.p) })),
+      subtotal: total,
+      ajustes: aj,
+      money: n => this.money(n),
+      backToCart: () => this.setState({ paso: 0 }),
+      confirmOrder: (d, r) => {
+        const envioTxt = r.envio === null ? 'por confirmar' : r.envio === 0 ? 'gratis' : this.money(r.envio);
+        const texto = [
+          `Hola, Atelier Parfums. Soy ${d.nombre}. Quiero hacer este pedido:`,
+          '',
+          ...cartRows.map(x => `• ${x.c.n} × ${x.p.nombre} — ${x.p.marca} (${x.p.conc} · ${x.p.ml} ml) — ${this.money(this.pf(x.p) * x.c.n)}`),
+          '',
+          `Subtotal: ${this.money(total)}`,
+          `Envío (${d.zona}): ${envioTxt}`,
+          `Total a pagar: ${this.money(r.total)}${r.envio === null ? ' + envío' : ''}`,
+          '',
+          `Pago: ${PAGOS[d.pago]}`,
+          `Teléfono: ${d.telefono}`,
+          `Entrega: ${d.zona}`,
+          d.direccion ? `Dirección: ${d.direccion}` : null,
+          d.ubicacion ? `Ubicación: ${d.ubicacion}` : null,
+          d.notas ? `Notas: ${d.notas}` : null,
+          '',
+          '¿Me confirman disponibilidad y entrega? Gracias.'
+        ].filter(l => l !== null).join('\n');
+        this.T('pedido', { total: r.total, pids: cartRows.map(x => x.p.id) });
+        this.wa(texto);
         this.saveDb(db => {
           const n = (db.pedidos || []).reduce((m, x) => Math.max(m, parseInt(String(x.id).replace(/\D/g, ''), 10) || 0), 0) + 1;
-          db.pedidos = [{ id: 'P-' + String(n).padStart(4, '0'), fecha: window.AtelierDatos.ahora(), nombre: nombre || '[Sin nombre]', items: cartRows.map(x => ({ pid: x.p.id, n: x.c.n, precio: this.pf(x.p) })), estado: 'Por confirmar' }, ...(db.pedidos || [])];
+          db.pedidos = [{ id: 'P-' + String(n).padStart(4, '0'), fecha: window.AtelierDatos.ahora(), ...d, items: cartRows.map(x => ({ pid: x.p.id, n: x.c.n, precio: this.pf(x.p) })), estado: 'Por confirmar' }, ...(db.pedidos || [])];
         });
-        this.setState({ cart: [], drawer: false, showMsg: false });
+        this.setState({ cart: [], drawer: false, paso: 0, showMsg: false });
         this.showToast('Pedido enviado. Te respondemos por WhatsApp.', false);
+        if (s.cli.cliente) setTimeout(refrescarCliente, 2500);
       },
 
       hasToast: !!s.toast && !s.drawer, toast: s.toast, toastPedido: s.toastPedido,
-      showFloat: (this.props.botonFlotante ?? true) && !s.drawer && !s.filtersOpen && !rf.open,
+      showFloat: (this.props.botonFlotante ?? true) && !s.drawer && !s.cuenta && !s.filtersOpen && !rf.open,
 
       rfOpen: rf.open, rfSent: rf.sent, rfForm: !rf.sent,
       closeReview: () => this.setState({ rf: this.emptyRf() }),
@@ -534,14 +585,23 @@ function view($v) {
             </span>
           </button>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "clamp(0px,1vw,10px)" }}>
+            {$v.loginOn ? (
+              <button onClick={$v.openCuenta} aria-label={"Mi cuenta"} style={{ width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: "#3D0000", cursor: "pointer", borderRadius: "999px", padding: "0" }} className={"dcp1"}>
+                {$v.cli?.foto ? <img src={$v.cli.foto} alt="" width="26" height="26" referrerPolicy="no-referrer" style={{ borderRadius: "999px", border: "1px solid #A97C50" }} /> : (
+                  <svg width={"21"} height={"21"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.2"}><circle cx={"12"} cy={"8.5"} r={"3.8"} /><path d={"M4.5 20c1.2-3.6 4-5.5 7.5-5.5s6.3 1.9 7.5 5.5"} /></svg>
+                )}
+              </button>
+            ) : null}
+            {$v.showHeaderWA ? (
             <button onClick={$v.contactWA} aria-label={"Escríbenos por WhatsApp"} style={{ width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: "#3D0000", cursor: "pointer", borderRadius: "999px" }} className={"dcp1"}>
               <svg width={"21"} height={"21"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.2"} strokeLinejoin={"round"}>
                 <path d={"M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"} />
                 <path d={"M9.2 8.2c-.4.4-.6 1-.4 1.8.6 2.2 2.6 4.3 4.9 4.9.8.2 1.4 0 1.8-.4l.4-.6-1.8-1-.8.7c-1-.4-1.9-1.3-2.3-2.3l.7-.8-1-1.8z"} />
               </svg>
             </button>
+            ) : null}
             {" "}
-            <button onClick={$v.openDrawer} aria-label={"Mi pedido"} style={{ height: "44px", minWidth: "44px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", border: "none", color: "#3D0000", cursor: "pointer", borderRadius: "999px", padding: "0 6px" }} className={"dcp1"}>
+            <button onClick={$v.openDrawer} aria-label={"Carrito"} style={{ height: "44px", minWidth: "44px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", background: "none", border: "none", color: "#3D0000", cursor: "pointer", borderRadius: "999px", padding: "0 6px" }} className={"dcp1"}>
               <svg width={"21"} height={"21"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.2"} strokeLinejoin={"round"}>
                 <path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} />
                 <path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} />
@@ -550,7 +610,7 @@ function view($v) {
               {$v.desktop ? (
                 <>
                   <span style={{ fontSize: "12px", letterSpacing: ".18em", textTransform: "uppercase" }}>
-                    {"Mi pedido"}
+                    {"Carrito"}
                   </span>
                 </>
               ) : null}
@@ -759,14 +819,9 @@ function view($v) {
                             <div style={{ display: "flex", gap: "6px", padding: "10px 16px 16px" }}>
                               {p?.available ? (
                                 <>
-                                  <button onClick={p?.onOrder} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", padding: "0 12px" }} className={"dcp4"}>
-                                    {"Pedir por WhatsApp"}
-                                  </button>
-                                  {" "}
-                                  <button onClick={p?.onAdd} aria-label={"Agregar al pedido"} title={"Agregar al pedido"} style={{ flex: "none", width: "44px", height: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} className={"dcp1"}>
-                                    <svg width={"15"} height={"15"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.5"}>
-                                      <path d={"M12 5v14M5 12h14"} />
-                                    </svg>
+                                  <button onClick={p?.onAdd} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".08em", textTransform: "uppercase", whiteSpace: "nowrap", cursor: "pointer", padding: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} className={"dcp4"}>
+                                    <svg width={"16"} height={"16"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}><path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} /><path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} /></svg>
+                                    {"Agregar al carrito"}
                                   </button>
                                 </>
                               ) : null}
@@ -869,14 +924,9 @@ function view($v) {
                             <div style={{ display: "flex", gap: "6px", padding: "10px 16px 16px" }}>
                               {p?.available ? (
                                 <>
-                                  <button onClick={p?.onOrder} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", padding: "0 12px" }} className={"dcp4"}>
-                                    {"Pedir por WhatsApp"}
-                                  </button>
-                                  {" "}
-                                  <button onClick={p?.onAdd} aria-label={"Agregar al pedido"} title={"Agregar al pedido"} style={{ flex: "none", width: "44px", height: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} className={"dcp1"}>
-                                    <svg width={"15"} height={"15"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.5"}>
-                                      <path d={"M12 5v14M5 12h14"} />
-                                    </svg>
+                                  <button onClick={p?.onAdd} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".08em", textTransform: "uppercase", whiteSpace: "nowrap", cursor: "pointer", padding: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} className={"dcp4"}>
+                                    <svg width={"16"} height={"16"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}><path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} /><path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} /></svg>
+                                    {"Agregar al carrito"}
                                   </button>
                                 </>
                               ) : null}
@@ -979,14 +1029,9 @@ function view($v) {
                             <div style={{ display: "flex", gap: "6px", padding: "10px 16px 16px" }}>
                               {p?.available ? (
                                 <>
-                                  <button onClick={p?.onOrder} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", padding: "0 12px" }} className={"dcp4"}>
-                                    {"Pedir por WhatsApp"}
-                                  </button>
-                                  {" "}
-                                  <button onClick={p?.onAdd} aria-label={"Agregar al pedido"} title={"Agregar al pedido"} style={{ flex: "none", width: "44px", height: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} className={"dcp1"}>
-                                    <svg width={"15"} height={"15"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.5"}>
-                                      <path d={"M12 5v14M5 12h14"} />
-                                    </svg>
+                                  <button onClick={p?.onAdd} style={{ flex: "1", minWidth: "0", minHeight: "44px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".08em", textTransform: "uppercase", whiteSpace: "nowrap", cursor: "pointer", padding: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} className={"dcp4"}>
+                                    <svg width={"16"} height={"16"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}><path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} /><path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} /></svg>
+                                    {"Agregar al carrito"}
                                   </button>
                                 </>
                               ) : null}
@@ -1154,6 +1199,18 @@ function view($v) {
                 </div>
               </div>
             </section>
+            <section data-screen-label={"Inicio · Encargos"} style={{ background: "#3D0000", color: "#F5E6E0", padding: "clamp(44px,6vw,80px) clamp(20px,5.5vw,80px)" }}>
+              <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "24px 48px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", maxWidth: "620px" }}>
+                  <span style={{ fontSize: "11px", letterSpacing: ".26em", textTransform: "uppercase", color: "#E2CBC1" }}>{"Encargos"}</span>
+                  <h2 style={{ margin: "0", fontFamily: "'Cormorant Garamond', serif", fontWeight: "300", fontSize: "clamp(32px,3.6vw,50px)", lineHeight: "1.05" }}>{"¿No encuentras tu perfume? "}<em style={{ fontStyle: "italic" }}>{"Lo traemos"}</em></h2>
+                  <p style={{ margin: "0", fontSize: "15px", lineHeight: "1.7", color: "#E2CBC1" }}>{"Dinos cuál buscas y te cotizamos por WhatsApp. Original, traído de Estados Unidos."}</p>
+                </div>
+                <button onClick={$v.goEncargos} style={{ minHeight: "52px", padding: "0 32px", borderRadius: "999px", border: "1px solid #F5E6E0", background: "#F5E6E0", color: "#3D0000", fontSize: "13px", letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer" }} className={"dcp3"}>
+                  {"Hacer un encargo"}
+                </button>
+              </div>
+            </section>
             <section data-screen-label={"Inicio · Por qué nosotros"} style={{ padding: "clamp(40px,5vw,72px) clamp(20px,5.5vw,80px) clamp(56px,8vw,112px)" }}>
               <div style={{ maxWidth: "1280px", margin: "0 auto", borderTop: "1px solid #E2CBC1", paddingTop: "clamp(48px,6vw,88px)" }}>
                 <h2 style={{ margin: "0 0 clamp(32px,4vw,56px)", fontFamily: "'Cormorant Garamond', serif", fontWeight: "300", fontSize: "clamp(34px,4vw,54px)", lineHeight: "1.05", color: "#3D0000", textAlign: "center" }}>
@@ -1245,10 +1302,10 @@ function view($v) {
                       {"02"}
                     </span>
                     <h3 style={{ margin: "0", fontFamily: "'Cormorant Garamond', serif", fontWeight: "400", fontSize: "clamp(22px,2vw,26px)", color: "#3D0000" }}>
-                      {"Agrégalo a tu pedido"}
+                      {"Agrégalo al carrito"}
                     </h3>
                     <p style={{ margin: "0", fontSize: "14.5px", lineHeight: "1.65", color: "#6E3A34", maxWidth: "36ch" }}>
-                      {"Toca “Agregar al pedido” en cada perfume. Puedes ajustar cantidades en Mi pedido."}
+                      {"Toca “Agregar al carrito” en cada perfume. Puedes ajustar cantidades antes de confirmar."}
                     </p>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "14px", borderTop: "1px solid #A97C50", paddingTop: "24px" }}>
@@ -1256,10 +1313,10 @@ function view($v) {
                       {"03"}
                     </span>
                     <h3 style={{ margin: "0", fontFamily: "'Cormorant Garamond', serif", fontWeight: "400", fontSize: "clamp(22px,2vw,26px)", color: "#3D0000" }}>
-                      {"Envíalo por WhatsApp y confirmamos"}
+                      {"Completa tus datos y confirma"}
                     </h3>
                     <p style={{ margin: "0", fontSize: "14.5px", lineHeight: "1.65", color: "#6E3A34", maxWidth: "36ch" }}>
-                      {"Tu pedido nos llega en un solo mensaje. Te confirmamos disponibilidad, pago y envío."}
+                      {"Elige dónde entregamos y cómo pagas. Tu pedido nos llega por WhatsApp y te confirmamos disponibilidad y entrega."}
                     </p>
                   </div>
                 </div>
@@ -1451,15 +1508,15 @@ function view($v) {
                           </em>
                         </p>
                         <p style={{ margin: "0", fontSize: "14px", color: "#6E3A34", maxWidth: "40ch" }}>
-                          {"Prueba con otra búsqueda o escríbenos: si no lo tenemos, podemos traerlo."}
+                          {"Prueba con otra búsqueda o encárgalo: si no lo tenemos, lo traemos de Estados Unidos."}
                         </p>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "center" }}>
                           <button onClick={$v.clearAll} style={{ minHeight: "44px", padding: "0 24px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", fontSize: "12.5px", letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer" }}>
                             {"Limpiar filtros"}
                           </button>
                           {" "}
-                          <button onClick={$v.contactWA} style={{ minHeight: "44px", padding: "0 24px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "12.5px", letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer" }}>
-                            {"Preguntar por WhatsApp"}
+                          <button onClick={$v.goEncargos} style={{ minHeight: "44px", padding: "0 24px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "12.5px", letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer" }}>
+                            {"Encargarlo"}
                           </button>
                         </div>
                       </div>
@@ -1586,16 +1643,9 @@ function view($v) {
                     {$v.prodAvailable ? (
                       <>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "14px" }}>
-                          <button onClick={$v.prod?.onOrder} style={{ flex: "1 1 220px", minHeight: "52px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "13px", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }} className={"dcp4"}>
-                            <svg width={"18"} height={"18"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}>
-                              <path d={"M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"} />
-                              <path d={"M9.2 8.2c-.4.4-.6 1-.4 1.8.6 2.2 2.6 4.3 4.9 4.9.8.2 1.4 0 1.8-.4l.4-.6-1.8-1-.8.7c-1-.4-1.9-1.3-2.3-2.3l.7-.8-1-1.8z"} />
-                            </svg>
-                            {" Pedir por WhatsApp "}
-                          </button>
-                          {" "}
-                          <button onClick={$v.prod?.onAdd} style={{ flex: "1 1 180px", minHeight: "52px", borderRadius: "999px", border: "1px solid #3D0000", background: "transparent", color: "#3D0000", fontSize: "13px", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer" }} className={"dcp1"}>
-                            {"Agregar al pedido"}
+                          <button onClick={$v.prod?.onAdd} style={{ flex: "1 1 260px", minHeight: "52px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "13px", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }} className={"dcp4"}>
+                            <svg width={"18"} height={"18"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}><path d={"M5.5 8h13l-1 12.5h-11L5.5 8z"} /><path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} /></svg>
+                            {"Agregar al carrito"}
                           </button>
                         </div>
                       </>
@@ -1816,6 +1866,9 @@ function view($v) {
           </main>
         </>
       ) : null}
+      {$v.isEncargos ? (
+        <Encargos waNum={$v.waNumEnc} inicial={$v.encQ} cliente={$v.cli} loginOn={$v.loginOn} onIrCuenta={$v.openCuenta} />
+      ) : null}
       <footer data-screen-label={"Footer"} style={{ background: "#3D0000", color: "#F5E6E0", padding: "clamp(56px,7vw,96px) clamp(20px,5.5vw,80px) 28px" }}>
         <div style={{ maxWidth: "1280px", margin: "0 auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,200px),1fr))", gap: "40px clamp(24px,4vw,56px)" }}>
@@ -1903,6 +1956,9 @@ function view($v) {
                 {"Ayuda"}
               </span>
               {" "}
+              <a href={"#encargos"} onClick={(e) => { e.preventDefault(); $v.goEncargos(); }} style={{ minHeight: "36px", display: "flex", alignItems: "center", color: "#F5E6E0" }} className={"dcp8"}>
+                {"Encargos"}
+              </a>
               <a href={"#preguntas"} onClick={(e) => { e.preventDefault(); $v.goFaq(0); }} style={{ minHeight: "36px", display: "flex", alignItems: "center", color: "#F5E6E0" }} className={"dcp8"}>
                 {"Preguntas frecuentes"}
               </a>
@@ -1948,7 +2004,7 @@ function view($v) {
             {$v.toastPedido ? (
               <>
                 <button onClick={$v.openDrawer} style={{ minHeight: "36px", padding: "0 16px", borderRadius: "999px", border: "1px solid #F5E6E0", background: "transparent", color: "#F5E6E0", fontSize: "11.5px", letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer", whiteSpace: "nowrap" }}>
-                  {"Ver pedido"}
+                  {"Ver carrito"}
                 </button>
               </>
             ) : null}
@@ -2145,15 +2201,15 @@ function view($v) {
       {" "}
       {$v.drawer ? (
         <>
-          <div data-screen-label={"Mi pedido"} style={{ position: "fixed", inset: "0", zIndex: "90", display: "flex", justifyContent: "flex-end" }}>
+          <div data-screen-label={"Carrito"} style={{ position: "fixed", inset: "0", zIndex: "90", display: "flex", justifyContent: "flex-end" }}>
             <div onClick={$v.closeDrawer} style={{ position: "absolute", inset: "0", background: "rgba(61,0,0,.42)" }} />
             <aside style={{ position: "relative", width: "min(440px,100%)", height: "100%", background: "#FBF4F0", display: "flex", flexDirection: "column", boxShadow: "-20px 0 60px rgba(61,0,0,.18)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 14px 16px 24px", borderBottom: "1px solid #E2CBC1" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
                   <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "30px", fontWeight: "300", color: "#3D0000" }}>
-                    {"Mi "}
+                    {"Tu "}
                     <em style={{ fontStyle: "italic" }}>
-                      {"pedido"}
+                      {"carrito"}
                     </em>
                   </span>
                   {" "}
@@ -2167,6 +2223,10 @@ function view($v) {
                   </svg>
                 </button>
               </div>
+              {$v.enCheckout ? (
+                <Checkout items={$v.checkoutItems} subtotal={$v.subtotal} ajustes={$v.ajustes} fmt={$v.money} onBack={$v.backToCart} onConfirm={$v.confirmOrder} cliente={$v.cli} loginOn={$v.loginOn} onLogin={$v.openCuenta} />
+              ) : (
+                <>
               <div style={{ flex: "1", overflowY: "auto", padding: "0 24px" }}>
                 {$v.cartEmpty ? (
                   <>
@@ -2176,7 +2236,7 @@ function view($v) {
                         <path d={"M9 10V6.5a3 3 0 0 1 6 0V10"} />
                       </svg>
                       <p style={{ margin: "0", fontFamily: "'Cormorant Garamond', serif", fontSize: "26px", fontWeight: "300", color: "#3D0000" }}>
-                        {"Tu pedido está "}
+                        {"Tu carrito está "}
                         <em style={{ fontStyle: "italic" }}>
                           {"vacío"}
                         </em>
@@ -2242,16 +2302,9 @@ function view($v) {
               {$v.cartHas ? (
                 <>
                   <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "18px 24px 22px", borderTop: "1px solid #E2CBC1", background: "#FBF4F0" }}>
-                    <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                      <span style={{ fontSize: "11px", letterSpacing: ".22em", textTransform: "uppercase", color: "#7A532E" }}>
-                        {"Tu nombre (opcional)"}
-                      </span>
-                      {" "}
-                      <input value={$v.cliente ?? ""} onChange={$v.onCliente} placeholder={"Para saludarte por tu nombre"} style={{ height: "44px", padding: "0 16px", border: "1px solid #E2CBC1", borderRadius: "10px", background: "transparent", fontSize: "14px", color: "#3D0000", outline: "none" }} />
-                    </label>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                       <span style={{ fontSize: "11px", letterSpacing: ".26em", textTransform: "uppercase", color: "#7A532E" }}>
-                        {"Total estimado"}
+                        {"Subtotal"}
                       </span>
                       {" "}
                       <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "30px", color: "#3D0000" }}>
@@ -2259,26 +2312,12 @@ function view($v) {
                       </span>
                     </div>
                     <p style={{ margin: "0", fontSize: "12.5px", lineHeight: "1.55", color: "#6E3A34" }}>
-                      {"El envío y la forma de pago se confirman por WhatsApp. No se realiza ningún cobro en este sitio."}
+                      {"En el siguiente paso eliges dónde entregamos y cómo pagas. No se realiza ningún cobro en este sitio."}
                     </p>
-                    <button onClick={$v.toggleMsg} style={{ alignSelf: "flex-start", minHeight: "32px", background: "none", border: "none", padding: "0", fontSize: "12px", color: "#3D0000", textDecoration: "underline", textDecorationColor: "#A97C50", textUnderlineOffset: "4px", cursor: "pointer" }}>
-                      {$v.msgToggleLabel}
-                    </button>
-                    {" "}
-                    {$v.showMsg ? (
-                      <>
-                        <pre style={{ margin: "0", maxHeight: "180px", overflow: "auto", padding: "14px 16px", background: "#F5E6E0", fontFamily: "Jost, sans-serif", fontSize: "12.5px", lineHeight: "1.6", color: "#3D0000", whiteSpace: "pre-wrap" }}>
-                          {$v.msgText}
-                        </pre>
-                      </>
-                    ) : null}
-                    {" "}
-                    <button onClick={$v.sendOrder} style={{ minHeight: "52px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "13px", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }} className={"dcp4"}>
-                      <svg width={"18"} height={"18"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"} strokeLinejoin={"round"}>
-                        <path d={"M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"} />
-                        <path d={"M9.2 8.2c-.4.4-.6 1-.4 1.8.6 2.2 2.6 4.3 4.9 4.9.8.2 1.4 0 1.8-.4l.4-.6-1.8-1-.8.7c-1-.4-1.9-1.3-2.3-2.3l.7-.8-1-1.8z"} />
-                      </svg>
-                      {" Enviar pedido por WhatsApp "}
+                    <button onClick={$v.goCheckout} style={{ minHeight: "52px", borderRadius: "999px", border: "1px solid #3D0000", background: "#3D0000", color: "#F5E6E0", fontSize: "13px", letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }} className={"dcp4"}>
+                      
+                      {"Continuar: datos de envío"}
+                      <svg width={"16"} height={"16"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.3"}><path d={"M5 12h14M13 6l6 6-6 6"} /></svg>
                     </button>
                     {" "}
                     <button onClick={$v.closeDrawer} style={{ minHeight: "44px", background: "none", border: "none", fontSize: "12px", letterSpacing: ".14em", textTransform: "uppercase", color: "#3D0000", cursor: "pointer" }}>
@@ -2287,9 +2326,14 @@ function view($v) {
                   </div>
                 </>
               ) : null}
+                </>
+              )}
             </aside>
           </div>
         </>
+      ) : null}
+      {$v.cuentaOpen ? (
+        <Cuenta estado={$v.cliEstado} productos={$v.allProducts} onCerrar={$v.closeCuenta} onSalir={$v.salir} onEncargos={$v.cuentaEncargos} />
       ) : null}
     </div>
   </>

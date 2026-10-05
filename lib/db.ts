@@ -9,8 +9,11 @@ function crear() {
   return postgres(url, {
     ssl: local ? false : 'require',
     max: local ? 5 : 3,
-    idle_timeout: 20,
-    prepare: false, // necesario con el pooler de Supabase (modo transacción)
+    idle_timeout: 10,       // cierra conexiones inactivas antes de que la red las corte
+    max_lifetime: 60 * 5,   // renueva cada conexión cada 5 min
+    connect_timeout: 10,    // si Supabase no responde, falla en 10 s en vez de colgarse
+    keep_alive: 30,
+    prepare: false,         // necesario con el pooler de Supabase (modo transacción)
     onnotice: () => {},
   });
 }
